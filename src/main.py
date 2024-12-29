@@ -14,8 +14,11 @@ documents = [
   "student's hobby is game developing"
 ]
 
-client = chromadb.Client()
-collection = client.create_collection(name="docs")
+client = chromadb.PersistentClient(
+    path='database/',
+    settings = Settings()
+)
+collection = client.get_or_create_collection(name="subaru")
 
 for i, d in enumerate(documents):
   response = ollama.embeddings(model="mxbai-embed-large", prompt=d)
@@ -32,6 +35,18 @@ if 'messages' not in st.session_state:
 def stream_chat(model, messages):
     try:
         llm = Ollama(model=model, request_timeout=120.0)
+        
+        response = ollama.embeddings(
+            prompt=messages[-1].content,
+            model="mxbai-embed-large"
+        )
+        queryResults = collection.query(
+            query_embeddings=[response["embedding"]],
+            n_results=1
+        )
+        data = queryResults['documents'][0][0]
+        
+        messages.append(ChatMessage(role="assistant", content=f"Using this data: {data}"))
         
         resp = llm.stream_chat(messages)
         response = ""
