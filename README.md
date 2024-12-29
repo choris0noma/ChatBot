@@ -37,7 +37,7 @@ http://localhost:8501/
 - **Ensure that you have installed all dependencies as mentioned in requirements.txt.**  
 - **Run the main application:**
 ```
-streamlit run app.py
+streamlit run main.py
 ```
 - **Open the application in your web browser by navigating to:**
 ```
