@@ -1,61 +1,72 @@
 import streamlit as st
 import ollama
 import chromadb
+from chromadb.config import Settings
 from llama_index.core.llms import ChatMessage
 import logging
 import time
 from llama_index.llms.ollama import Ollama
 
 logging.basicConfig(level=logging.INFO)
-documents = [
-  "student's name is Danial",
-  "student's age is 18",
-  "student's major is Computer Science",
-  "student's hobby is game developing"
-]
 
 client = chromadb.PersistentClient(
     path='database/',
-    settings = Settings()
+    settings=Settings()
 )
-collection = client.get_or_create_collection(name="subaru")
+collection = client.get_or_create_collection(name="history")
 
-for i, d in enumerate(documents):
-  response = ollama.embeddings(model="mxbai-embed-large", prompt=d)
-  embedding = response["embedding"]
-  collection.add(
-    ids=[str(i)],
-    embeddings=[embedding],
-    documents=[d]
-  )
-
-if 'messages' not in st.session_state:
-    st.session_state.messages = []
+def get_chat_history(collection):
+    try:
+        all_documents = collection.get()
+        ids = all_documents['ids']
+        documents = all_documents['documents']
+        sorted_data = sorted(zip(ids, documents), key=lambda x: int(x[0].split('-')[1]))
+        
+        chat_history = []
+        for id_, doc in sorted_data:
+            if id_.startswith("user-"):
+                chat_history.append({"role": "user", "content": doc})
+            elif id_.startswith("assistant-"):
+                chat_history.append({"role": "assistant", "content": doc})
+        
+        return chat_history
+    except Exception as e:
+        logging.error(f"Error retrieving chat history: {str(e)}")
+        return []
 
 def stream_chat(model, messages):
     try:
         llm = Ollama(model=model, request_timeout=120.0)
-        
-        response = ollama.embeddings(
-            prompt=messages[-1].content,
+       
+        user_message = messages[-1].content
+        user_embedding_response = ollama.embeddings(
+            prompt=user_message,
             model="mxbai-embed-large"
         )
-        queryResults = collection.query(
-            query_embeddings=[response["embedding"]],
-            n_results=1
-        )
-        data = queryResults['documents'][0][0]
-        
-        messages.append(ChatMessage(role="assistant", content=f"Using this data: {data}"))
+        user_embedding = user_embedding_response["embedding"]
         
         resp = llm.stream_chat(messages)
-        response = ""
+        assistant_response = ""
         response_placeholder = st.empty()
         for r in resp:
-            response += r.delta
-            response_placeholder.write(response)
-        logging.info(f"Model: {model}, Messages: {messages}, Response: {response}")
-        return response
+            assistant_response += r.delta
+            response_placeholder.write(assistant_response)
+            
+        assistant_embedding_response = ollama.embeddings(
+            prompt=assistant_response,
+            model="mxbai-embed-large"
+        )
+        assistant_embedding = assistant_embedding_response["embedding"]
+        
+        existing_count = len(collection.get()['ids']) // 2
+        collection.add(
+            ids=[f"user-{existing_count+1}", f"assistant-{existing_count+1}"],
+            embeddings=[user_embedding, assistant_embedding],
+            documents=[user_message, assistant_response]
+        )
+
+        logging.info(f"Model: {model}, Messages: {messages}, Response: {assistant_response}")
+        return assistant_response
     except Exception as e:
         logging.error(f"Error during streaming: {str(e)}")
         raise e
@@ -66,6 +77,14 @@ def main():
 
     model = st.sidebar.selectbox("Choose a model", ["llama3.2"])
     logging.info(f"Model selected: {model}")
+    
+    if 'messages' not in st.session_state:
+        st.session_state.messages = []
+        
+    chat_history = get_chat_history(collection)
+    for message in chat_history:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
 
     if prompt := st.chat_input("Your question"):
         st.session_state.messages.append({"role": "user", "content": prompt})
