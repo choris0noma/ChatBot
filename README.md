@@ -25,7 +25,7 @@ streamlit run main.py
 ```  
 
 
-**Access the ChatBot**
+**Access the ChatBot**  
 Open your web browser and navigate to:
 ```
 http://localhost:8501/
