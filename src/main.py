@@ -1,53 +1,42 @@
 import streamlit as st
+import ollama
 import chromadb
-from streamlit_chromadb_connection.chromadb_connection import ChromadbConnection
 from llama_index.core.llms import ChatMessage
 import logging
 import time
 from llama_index.llms.ollama import Ollama
 
-
-configuration = {
-    "client": "PersistentClient",
-    "path": "/tmp/.chroma"
-}
-collection_name = "documents_collection"
-embedding_function_name = "DefaultEmbedding"
+logging.basicConfig(level=logging.INFO)
 documents = [
-    "Llamas are members of the camelid family meaning they're pretty closely related to vicuñas and camels.",
-    "Llamas were first domesticated and used as pack animals 4,000 to 5,000 years ago in the Peruvian highlands.",
-    "Llamas can grow as much as 6 feet tall though the average llama is between 5 feet 6 inches and 5 feet 9 inches tall.",
-    "Llamas weigh between 280 and 450 pounds and can carry 25 to 30 percent of their body weight.",
-    "Llamas are vegetarians and have very efficient digestive systems.",
-    "Llamas live to be about 20 years old, though some only live for 15 years and others live to be 30 years old."
+  "student's name is Danial",
+  "student's age is 18",
+  "student's major is Computer Science",
+  "student's hobby is game developing"
 ]
 
-conn = st.connection("chromadb", type=ChromadbConnection, **configuration)
-conn.create_collection(
-    collection_name=collection_name,
-    embedding_function_name=embedding_function_name
-)
-conn.upload_documents(
-    collection_name=collection_name,
-    documents=documents,
-    embedding_function_name=embedding_function_name
-)
+client = chromadb.Client()
+collection = client.create_collection(name="docs")
+
+for i, d in enumerate(documents):
+  response = ollama.embeddings(model="mxbai-embed-large", prompt=d)
+  embedding = response["embedding"]
+  collection.add(
+    ids=[str(i)],
+    embeddings=[embedding],
+    documents=[d]
+  )
 
 if 'messages' not in st.session_state:
     st.session_state.messages = []
 
-def stream_chat(model: str, messages: list[ChatMessage]):
+def stream_chat(model, messages):
     try:
         llm = Ollama(model=model, request_timeout=120.0)
-        collection_data = conn.get_collection_data(
-            collection_name=collection_name,
-            attributes=["documents", "embeddings"]
-        )
-        context = "\n".join(collection_data["documents"])
-        prompt = f"Using this data: {context}. Respond to this prompt: {messages[-1].content}"
+        
+        resp = llm.stream_chat(messages)
         response = ""
         response_placeholder = st.empty()
-        for r in llm.stream_chat(prompt):
+        for r in resp:
             response += r.delta
             response_placeholder.write(response)
         logging.info(f"Model: {model}, Messages: {messages}, Response: {response}")
@@ -60,7 +49,7 @@ def main():
     st.title("The ChatBot")
     logging.info("App started")
 
-    model = st.sidebar.selectbox("Choose a model", ["mymodel", "llama3.2", "phi3", "mistral"])
+    model = st.sidebar.selectbox("Choose a model", ["llama3.2"])
     logging.info(f"Model selected: {model}")
 
     if prompt := st.chat_input("Your question"):
