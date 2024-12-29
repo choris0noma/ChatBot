@@ -1,6 +1,6 @@
-![screencapture-localhost-8501-2024-12-30-03_11_47](https://github.com/user-attachments/assets/2c7f1ea2-3386-4c5a-9d19-f06e87eb951a)# ChatBot Ollama
+# ChatBot Ollama
 
-##Installation  
+## Installation  
 **Clone the Repository**  
 First, clone the repository from GitHub:  
 ```
@@ -33,7 +33,7 @@ http://localhost:8501/
 ```
 
 
-##Usage  
+## Usage  
 - **Ensure that you have installed all dependencies as mentioned in requirements.txt.**  
 - **Run the main application:**
 ```
@@ -44,7 +44,7 @@ streamlit run app.py
 http://localhost:8501/
 ```
 
-##Examples
+## Examples
 ![screencapture-localhost-8501-2024-12-30-03_11_47](https://github.com/user-attachments/assets/775cca22-0ffd-4fde-948c-d817fbe16010)
 
 
