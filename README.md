@@ -1,5 +1,6 @@
 # ChatBot Ollama
-
+Basic chatbot functionality using ollama model, streamlit for chatting and chromaDB for saving chat history.
+History is saved in **database** folder in **src**
 ## Installation  
 **Clone the Repository**  
 First, clone the repository from GitHub:  
