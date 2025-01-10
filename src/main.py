@@ -6,18 +6,57 @@ from llama_index.core.llms import ChatMessage
 import logging
 import time
 from llama_index.llms.ollama import Ollama
+from io import StringIO
+import uuid
 
 logging.basicConfig(level=logging.INFO)
+
 
 client = chromadb.PersistentClient(
     path='database/',
     settings=Settings()
 )
-collection = client.get_or_create_collection(name="history")
 
-def get_chat_history(collection):
+history = client.get_or_create_collection(name="history")
+contextCollection = client.get_or_create_collection(name="context")
+
+
+if st.sidebar.button("Clear Files"):
+    contextCollection.delete(contextCollection.get()['ids'])
+    st.success("files cleared successfully.")
+    
+if st.sidebar.button("Clear History"):
+    history.delete(history.get()['ids'])
+    st.success("history cleared successfully.")
+
+uploaded_files = st.file_uploader("Choose a txt file", accept_multiple_files=True)
+docs = []
+ids = []
+
+if 'uploaded_files' not in st.session_state:
+    st.session_state.uploaded_files = []
+
+for uploaded_file in uploaded_files:
+    bytes_data = uploaded_file.read()
+    stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
+    doc_content = stringio.getvalue()
+    docs.append(doc_content)
+    unique_id = str(uuid.uuid4())
+    ids.append(unique_id)
+    st.write("Filename:", uploaded_file.name)
+    st.write(bytes_data)
+
+if len(docs) > 0:
+    contextCollection.add(
+        documents=docs,
+        ids=ids
+    )
+    st.success("Documents added to context collection.")
+
+
+def get_chat_history(history):
     try:
-        all_documents = collection.get()
+        all_documents = history.get()
         ids = all_documents['ids']
         documents = all_documents['documents']
         sorted_data = sorted(zip(ids, documents), key=lambda x: int(x[0].split('-')[1]))
@@ -34,16 +73,35 @@ def get_chat_history(collection):
         logging.error(f"Error retrieving chat history: {str(e)}")
         return []
 
+
+def query_context(prompt, n_results=1):
+    try:
+        results = contextCollection.query(
+            query_texts=[prompt],
+            n_results=n_results
+        )
+        return results["documents"] if results["documents"] else ["No relevant documents found."]
+    except Exception as e:
+        logging.error(f"Error querying context: {str(e)}")
+        return ["No relevant documents found."]
+
+
 def stream_chat(model, messages):
     try:
         llm = Ollama(model=model, request_timeout=120.0)
-       
-        user_message = messages[-1].content
+        prompt = messages[-1].content
         user_embedding_response = ollama.embeddings(
-            prompt=user_message,
+            prompt=prompt,
             model="mxbai-embed-large"
         )
         user_embedding = user_embedding_response["embedding"]
+        length = len(contextCollection.get()['ids'])
+        retrieved_docs = []
+        if length > 0:
+            retrieved_docs = query_context(prompt, length)
+        
+        context = " ".join(retrieved_docs[0]) if retrieved_docs else "No relevant documents found."
+        messages[-1].content = f"Context: {context}\n\nQuestion: {prompt}\nAnswer:"
         
         resp = llm.stream_chat(messages)
         assistant_response = ""
@@ -58,11 +116,11 @@ def stream_chat(model, messages):
         )
         assistant_embedding = assistant_embedding_response["embedding"]
         
-        existing_count = len(collection.get()['ids']) // 2
-        collection.add(
+        existing_count = len(history.get()['ids']) // 2
+        history.add(
             ids=[f"user-{existing_count+1}", f"assistant-{existing_count+1}"],
             embeddings=[user_embedding, assistant_embedding],
-            documents=[user_message, assistant_response]
+            documents=[prompt, assistant_response]
         )
 
         logging.info(f"Model: {model}, Messages: {messages}, Response: {assistant_response}")
@@ -70,6 +128,7 @@ def stream_chat(model, messages):
     except Exception as e:
         logging.error(f"Error during streaming: {str(e)}")
         raise e
+
 
 def main():
     st.title("The ChatBot")
@@ -81,7 +140,7 @@ def main():
     if 'messages' not in st.session_state:
         st.session_state.messages = []
         
-    chat_history = get_chat_history(collection)
+    chat_history = get_chat_history(history)
     for message in chat_history:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
