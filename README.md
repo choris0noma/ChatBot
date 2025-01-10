@@ -47,6 +47,8 @@ http://localhost:8501/
 
 ## Examples
 ![screencapture-localhost-8501-2024-12-30-03_11_47](https://github.com/user-attachments/assets/775cca22-0ffd-4fde-948c-d817fbe16010)
+![Screenshot 2025-01-10 224240](https://github.com/user-attachments/assets/077343ee-fadf-41f0-9d29-fdb7d89571a2)
+![image](https://github.com/user-attachments/assets/b45b3bb9-6bd1-4747-aca4-921a3f74337a)
 
 
  
