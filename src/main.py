@@ -8,6 +8,9 @@ import time
 from llama_index.llms.ollama import Ollama
 from io import StringIO
 import uuid
+import pdfplumber
+import os
+import re
 
 logging.basicConfig(level=logging.INFO)
 
@@ -19,7 +22,7 @@ client = chromadb.PersistentClient(
 
 history = client.get_or_create_collection(name="history")
 contextCollection = client.get_or_create_collection(name="context")
-
+constitutionCollection = client.get_or_create_collection(name="constitution")
 
 if st.sidebar.button("Clear Files"):
     contextCollection.delete(contextCollection.get()['ids'])
@@ -54,6 +57,53 @@ if len(docs) > 0:
     st.success("Documents added to context collection.")
 
 
+def extract_text_from_pdf(pdf_path):
+    with pdfplumber.open(pdf_path) as pdf:
+        text = ""
+        for page in pdf.pages:
+            text += page.extract_text()
+    return text
+
+def extract_articles(file_path):
+    with open(file_path, "r", encoding="utf-8") as file:
+        text = file.read()
+    
+    articles = re.split(r"(Article \d+)", text)
+    
+    parsed_articles = {}
+    for i in range(1, len(articles), 2):
+        article_number = articles[i].strip()
+        article_content = articles[i + 1].strip()  
+        if article_content:
+            full_article = f"{article_number} {article_content}"
+            parsed_articles[article_number] = full_article
+    
+    if not parsed_articles:
+        logging.warning("No articles were extracted. Please check the constitution text format.")
+    
+    return parsed_articles
+
+
+
+def store_constitution(articles):
+    constitutionCollection.add(
+        ids=list(articles.keys()), 
+        documents=list(articles.values()) 
+    )
+    
+pdf_path = "constitution.pdf"
+txt_path = "constitution.txt"
+
+if not os.path.exists(txt_path) or os.stat(txt_path).st_size == 0 or len(constitutionCollection.get()['ids']) <=0:
+    constitution_text = extract_text_from_pdf(pdf_path)
+    if constitution_text.strip():
+        with open(txt_path, "w", encoding="utf-8") as file:
+            file.write(constitution_text)
+        articles = extract_articles(txt_path)
+        store_constitution(articles)
+    else:
+        logging.error("Failed to extract text from the PDF. Please check the file.")
+
 def get_chat_history(history):
     try:
         all_documents = history.get()
@@ -74,9 +124,9 @@ def get_chat_history(history):
         return []
 
 
-def query_context(prompt, n_results=1):
+def query_context(prompt, n_results=1, targetCollection = contextCollection):
     try:
-        results = contextCollection.query(
+        results = targetCollection.query(
             query_texts=[prompt],
             n_results=n_results
         )
@@ -90,15 +140,20 @@ def stream_chat(model, messages):
     try:
         llm = Ollama(model=model, request_timeout=120.0)
         prompt = messages[-1].content
+        
         user_embedding_response = ollama.embeddings(
             prompt=prompt,
             model="mxbai-embed-large"
         )
         user_embedding = user_embedding_response["embedding"]
-        length = len(contextCollection.get()['ids'])
         retrieved_docs = []
-        if length > 0:
-            retrieved_docs = query_context(prompt, length)
+        if model == "constitModel":
+            retrieved_docs = query_context(prompt, 10, constitutionCollection)
+            print(retrieved_docs[0])
+        else:
+            length = len(contextCollection.get()['ids'])
+            if length > 0:
+                retrieved_docs = query_context(prompt, length)
         
         context = " ".join(retrieved_docs[0]) if retrieved_docs else "No relevant documents found."
         messages[-1].content = f"Context: {context}\n\nQuestion: {prompt}\nAnswer:"
@@ -134,7 +189,7 @@ def main():
     st.title("The ChatBot")
     logging.info("App started")
 
-    model = st.sidebar.selectbox("Choose a model", ["llama3.2"])
+    model = st.sidebar.selectbox("Choose a model", ["llama3.2", "constitModel"])
     logging.info(f"Model selected: {model}")
     
     if 'messages' not in st.session_state:
