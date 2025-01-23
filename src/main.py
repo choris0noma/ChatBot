@@ -11,18 +11,6 @@ import uuid
 import pdfplumber
 import os
 import re
-from langchain_community.vectorstores import Chroma
-from langchain_community.llms import Ollama
-from langchain_openai import OpenAIEmbeddings
-
-vector = Chroma(
-    collection_name="anotherConstit",
-    embedding_function=OpenAIEmbeddings(),
-)
-
-os.environ['LANGCHAIN_TRACING_V2'] = 'true'
-os.environ['LANGCHAIN_ENDPOINT'] = 'https://api.smith.langchain.com'
-os.environ['LANGCHAIN_API_KEY'] = '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'
 
 logging.basicConfig(level=logging.INFO)
 
@@ -138,16 +126,11 @@ def get_chat_history(history):
 
 def query_context(prompt, n_results=1, targetCollection = contextCollection):
     try:
-        retriever = vector.as_retriever(search_type="similarity", search_kwargs={"k": 3})
-        retrieved_docs = retriever.invoke(prompt)
-        return retrieved_docs
-        '''
         results = targetCollection.query(
             query_texts=[prompt],
             n_results=n_results
         )
-        '''
-        #return results["documents"] if results["documents"] else ["No relevant documents found."]
+        return results["documents"] if results["documents"] else ["No relevant documents found."]
     except Exception as e:
         logging.error(f"Error querying context: {str(e)}")
         return ["No relevant documents found."]
@@ -155,8 +138,7 @@ def query_context(prompt, n_results=1, targetCollection = contextCollection):
 
 def stream_chat(model, messages):
     try:
-        #llm = Ollama(model=model, request_timeout=120.0)
-        llm = Ollama(model=model)
+        llm = Ollama(model=model, request_timeout=120.0)
         prompt = messages[-1].content
         
         user_embedding_response = ollama.embeddings(
