@@ -6,148 +6,138 @@ from llama_index.core.llms import ChatMessage
 import logging
 import time
 from llama_index.llms.ollama import Ollama
-from io import StringIO
-import uuid
-import pdfplumber
 import os
-import re
 from langchain_community.vectorstores import Chroma
-from langchain_community.llms import Ollama
-from langchain_openai import OpenAIEmbeddings
-
-vector = Chroma(
-    collection_name="anotherConstit",
-    embedding_function=OpenAIEmbeddings(),
-)
+#from langchain_community.llms import Ollama
+from langchain_ollama import OllamaEmbeddings
+from langchain_core.documents import Document
+from langchain_community.document_loaders import PDFPlumberLoader
+from langchain_experimental.text_splitter import SemanticChunker
+from langchain.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+from langchain_openai import ChatOpenAI
+from langchain.load import dumps, loads
 
 os.environ['LANGCHAIN_TRACING_V2'] = 'true'
 os.environ['LANGCHAIN_ENDPOINT'] = 'https://api.smith.langchain.com'
 os.environ['LANGCHAIN_API_KEY'] = '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'
+pdf_path = "constitution.pdf"
+constitution_db_path = 'datbabse/constitution/'
+history_db_path = 'datbabse/history/'
+embedding=OllamaEmbeddings(model="mxbai-embed-large",)
+text_splitter = SemanticChunker(embedding)
 
 logging.basicConfig(level=logging.INFO)
 
+uploaded_files = st.file_uploader("Choose a txt file", accept_multiple_files=True, type=['pdf', 'txt'])
+ragFusionOn = st.sidebar.toggle("rag fusion")
+import pdfplumber
 
-client = chromadb.PersistentClient(
-    path='database/',
-    settings=Settings()
-)
-
-history = client.get_or_create_collection(name="history")
-contextCollection = client.get_or_create_collection(name="context")
-constitutionCollection = client.get_or_create_collection(name="constitution")
-
-if st.sidebar.button("Clear Files"):
-    contextCollection.delete(contextCollection.get()['ids'])
-    st.success("files cleared successfully.")
+def load_files():
+    if 'uploaded_files' not in st.session_state:
+        st.session_state.uploaded_files = []
     
-if st.sidebar.button("Clear History"):
-    history.delete(history.get()['ids'])
-    st.success("history cleared successfully.")
-
-uploaded_files = st.file_uploader("Choose a txt file", accept_multiple_files=True)
-docs = []
-ids = []
-
-if 'uploaded_files' not in st.session_state:
-    st.session_state.uploaded_files = []
-
-for uploaded_file in uploaded_files:
-    bytes_data = uploaded_file.read()
-    stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
-    doc_content = stringio.getvalue()
-    docs.append(doc_content)
-    unique_id = str(uuid.uuid4())
-    ids.append(unique_id)
-    st.write("Filename:", uploaded_file.name)
-    st.write(bytes_data)
-
-if len(docs) > 0:
-    contextCollection.add(
-        documents=docs,
-        ids=ids
-    )
-    st.success("Documents added to context collection.")
-
-
-def extract_text_from_pdf(pdf_path):
-    with pdfplumber.open(pdf_path) as pdf:
-        text = ""
-        for page in pdf.pages:
-            text += page.extract_text()
-    return text
-
-def extract_articles(file_path):
-    with open(file_path, "r", encoding="utf-8") as file:
-        text = file.read()
+    documents = []
     
-    articles = re.split(r"(Article \d+)", text)
-    
-    parsed_articles = {}
-    for i in range(1, len(articles), 2):
-        article_number = articles[i].strip()
-        article_content = articles[i + 1].strip()  
-        if article_content:
-            full_article = f"{article_number} {article_content}"
-            parsed_articles[article_number] = full_article
-    
-    if not parsed_articles:
-        logging.warning("No articles were extracted. Please check the constitution text format.")
-    
-    return parsed_articles
+    for uploaded_file in uploaded_files:
+        file_extension = os.path.splitext(uploaded_file.name)[1].lower()
 
+        if file_extension == ".pdf":
+            with pdfplumber.open(uploaded_file) as pdf:
+                text = "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
+        else:
+            text = uploaded_file.getvalue().decode("utf-8", errors="ignore")
 
+        documents.append(Document(page_content=text))
 
-def store_constitution(articles):
-    constitutionCollection.add(
-        ids=list(articles.keys()), 
-        documents=list(articles.values()) 
-    )
-    
-pdf_path = "constitution.pdf"
-txt_path = "constitution.txt"
-
-if not os.path.exists(txt_path) or os.stat(txt_path).st_size == 0 or len(constitutionCollection.get()['ids']) <=0:
-    constitution_text = extract_text_from_pdf(pdf_path)
-    if constitution_text.strip():
-        with open(txt_path, "w", encoding="utf-8") as file:
-            file.write(constitution_text)
-        articles = extract_articles(txt_path)
-        store_constitution(articles)
-    else:
-        logging.error("Failed to extract text from the PDF. Please check the file.")
-
-def get_chat_history(history):
     try:
-        all_documents = history.get()
-        ids = all_documents['ids']
-        documents = all_documents['documents']
-        sorted_data = sorted(zip(ids, documents), key=lambda x: int(x[0].split('-')[1]))
-        
-        chat_history = []
-        for id_, doc in sorted_data:
-            if id_.startswith("user-"):
-                chat_history.append({"role": "user", "content": doc})
-            elif id_.startswith("assistant-"):
-                chat_history.append({"role": "assistant", "content": doc})
-        
-        return chat_history
+        return Chroma.from_documents(documents=documents, embedding=embedding)
     except Exception as e:
-        logging.error(f"Error retrieving chat history: {str(e)}")
-        return []
+        logging.error(f"Error creating Chroma vectorstore: {str(e)}")
 
 
-def query_context(prompt, n_results=1, targetCollection = contextCollection):
+def load_constitution():
+    if os.path.exists(constitution_db_path) and os.listdir(constitution_db_path):
+        return Chroma(persist_directory=constitution_db_path, embedding_function=embedding)
+    
+    loader = PDFPlumberLoader(pdf_path)
+    docs = loader.load()
+    documents = text_splitter.split_documents(docs)
+    vectorstore = Chroma.from_documents(
+        documents=documents, 
+        embedding=embedding,
+        persist_directory=constitution_db_path
+    )
+    return vectorstore
+
+def load_history():
+    return Chroma(persist_directory=history_db_path, embedding_function=embedding)
+
+def history_to_chat(vectorstore):
     try:
-        retriever = vector.as_retriever(search_type="similarity", search_kwargs={"k": 3})
-        retrieved_docs = retriever.invoke(prompt)
-        return retrieved_docs
-        '''
-        results = targetCollection.query(
-            query_texts=[prompt],
-            n_results=n_results
-        )
-        '''
-        #return results["documents"] if results["documents"] else ["No relevant documents found."]
+        results = vectorstore.get()
+        if results and "documents" in results:
+            messages = [Document(page_content=doc) for doc in results["documents"]]
+            
+            for message in messages:
+                cleaned_content = message.page_content.lstrip("user: ").lstrip("assistant: ")
+                with st.chat_message("user" if "user" in message.page_content else "assistant"):
+                    st.markdown(cleaned_content)
+
+            st.session_state.messages = [{"role": "user" if "user" in msg.page_content else "assistant", 
+                                          "content": msg.page_content.lstrip("user: ").lstrip("assistant: ")} 
+                                         for msg in messages]
+    except Exception as e:
+        logging.error(f"Error retrieving history: {str(e)}")
+
+files_vectorstore = load_files()
+constitution_vectorstore = load_constitution()
+history_vectorstore = load_history()
+
+def generate_queries(question,model, n=5):
+    llm = Ollama(model=model, request_timeout=60.0)
+    
+    prompt = f"""You are a helpful assistant. Generate {n} search queries related to: {question}.
+    Output {n} variations, each on a new line."""
+    
+    response = llm.complete(prompt)
+    queries = response.text.split("\n")
+
+    
+    return [q.strip() for q in queries if q.strip()]  
+
+
+def reciprocal_rank_fusion(results, k=60):
+    fused_scores = {}
+    for docs in results:
+        for rank, doc in enumerate(docs):
+            doc_str = dumps(doc)
+            if doc_str not in fused_scores:
+                fused_scores[doc_str] = 0
+            fused_scores[doc_str] += 1 / (rank + k)
+
+    reranked_results = sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)
+    return [loads(doc[0]) for doc in reranked_results]
+
+def query_context(prompt,model, n_results=5, vectorstore=None):
+    if vectorstore is None:
+        return ["No context found or provided."]
+    
+    try:
+        if ragFusionOn:
+            queries = generate_queries(prompt,model)
+            st.sidebar.write(queries)
+            retrieved_results = [vectorstore.as_retriever(search_kwargs={"k": n_results}).invoke(q) for q in queries]
+            reranked_docs = reciprocal_rank_fusion(retrieved_results)
+        else:
+            retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": n_results})
+            reranked_docs = retriever.invoke(prompt)
+
+        if not isinstance(reranked_docs, list) or not all(hasattr(doc, "page_content") for doc in reranked_docs):
+            logging.error("Invalid retrieved documents format.")
+            return ["No relevant documents found."]
+        
+        return reranked_docs
     except Exception as e:
         logging.error(f"Error querying context: {str(e)}")
         return ["No relevant documents found."]
@@ -155,52 +145,38 @@ def query_context(prompt, n_results=1, targetCollection = contextCollection):
 
 def stream_chat(model, messages):
     try:
-        #llm = Ollama(model=model, request_timeout=120.0)
-        llm = Ollama(model=model)
+        llm = Ollama(model=model, request_timeout=120.0)
         prompt = messages[-1].content
-        
-        user_embedding_response = ollama.embeddings(
-            prompt=prompt,
-            model="mxbai-embed-large"
-        )
-        user_embedding = user_embedding_response["embedding"]
-        retrieved_docs = []
+
         if model == "constitModel":
-            retrieved_docs = query_context(prompt, 10, constitutionCollection)
-            print(retrieved_docs[0])
+            retrieved_docs = query_context(prompt,model, 10, constitution_vectorstore)
         else:
-            length = len(contextCollection.get()['ids'])
-            if length > 0:
-                retrieved_docs = query_context(prompt, length)
-        
-        context = " ".join(retrieved_docs[0]) if retrieved_docs else "No relevant documents found."
+            retrieved_docs = query_context(prompt,model, 10, files_vectorstore)
+
+        context = " ".join(doc.page_content for doc in retrieved_docs if hasattr(doc, "page_content"))
+
         messages[-1].content = f"Context: {context}\n\nQuestion: {prompt}\nAnswer:"
-        
         resp = llm.stream_chat(messages)
+        
         assistant_response = ""
         response_placeholder = st.empty()
         for r in resp:
             assistant_response += r.delta
             response_placeholder.write(assistant_response)
-            
-        assistant_embedding_response = ollama.embeddings(
-            prompt=assistant_response,
-            model="mxbai-embed-large"
-        )
-        assistant_embedding = assistant_embedding_response["embedding"]
-        
-        existing_count = len(history.get()['ids']) // 2
-        history.add(
-            ids=[f"user-{existing_count+1}", f"assistant-{existing_count+1}"],
-            embeddings=[user_embedding, assistant_embedding],
-            documents=[prompt, assistant_response]
-        )
 
         logging.info(f"Model: {model}, Messages: {messages}, Response: {assistant_response}")
+
+        history_vectorstore.add_documents([
+            Document(page_content=f"user: {prompt}"),
+            Document(page_content=f"assistant: {assistant_response}")
+        ])
+
         return assistant_response
     except Exception as e:
         logging.error(f"Error during streaming: {str(e)}")
-        raise e
+        return "An error occurred."
+
+
 
 
 def main():
@@ -212,12 +188,7 @@ def main():
     
     if 'messages' not in st.session_state:
         st.session_state.messages = []
-        
-    chat_history = get_chat_history(history)
-    for message in chat_history:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-
+    history_to_chat(history_vectorstore)
     if prompt := st.chat_input("Your question"):
         st.session_state.messages.append({"role": "user", "content": prompt})
         for message in st.session_state.messages:
