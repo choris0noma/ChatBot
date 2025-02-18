@@ -1,21 +1,14 @@
 import streamlit as st
-import ollama
-import chromadb
-from chromadb.config import Settings
 from llama_index.core.llms import ChatMessage
 import logging
 import time
 from llama_index.llms.ollama import Ollama
 import os
 from langchain_community.vectorstores import Chroma
-#from langchain_community.llms import Ollama
 from langchain_ollama import OllamaEmbeddings
 from langchain_core.documents import Document
 from langchain_community.document_loaders import PDFPlumberLoader
 from langchain_experimental.text_splitter import SemanticChunker
-from langchain.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import StrOutputParser
-from langchain_openai import ChatOpenAI
 from langchain.load import dumps, loads
 
 os.environ['LANGCHAIN_TRACING_V2'] = 'true'
@@ -142,7 +135,7 @@ def query_context(prompt,model, n_results=5, vectorstore=None):
         logging.error(f"Error querying context: {str(e)}")
         return ["No relevant documents found."]
 
-
+ 
 def stream_chat(model, messages):
     try:
         llm = Ollama(model=model, request_timeout=120.0)
